@@ -1120,15 +1120,23 @@ window.__ModuleLoader__.load({
 
 			// Keyed by command name: render our own card for `/preset` instead of the
 			// generic command card (Chinese title + short collapsed summary + details).
+			// priority: -1 —— 若同一页面里还残留旧版插件（相同 key 的注册），新注册
+			// 会以更低优先级“遮住”它，而不是让整个插件同步失败；正常安装时就是唯一项。
 			ctx.slots.inject("conversation.chat.commandview", function () {
-				return ctx.slots.register(
-					{
-						name: "conversation.chat.commandview",
-						key: "preset",
-						locale: NS
-					},
-					PresetCommandCard
-				);
+				try {
+					return ctx.slots.register(
+						{
+							name: "conversation.chat.commandview",
+							key: "preset",
+							priority: -1,
+							locale: NS
+						},
+						PresetCommandCard
+					);
+				} catch (error) {
+					console.warn("[preset-manager] commandview slot conflict, keeping the other registration:", error);
+					return function () {};
+				}
 			});
 
 			// Settings → 预设管理：总开关 + 逐预设开关（写回 `preset-manager`
