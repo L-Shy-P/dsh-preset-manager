@@ -24,9 +24,27 @@
 1. persona 换成三段自定义专家提示词；
 2. 委派工具允许通过 `agent_preset` 为子代理选择预设。
 
-该预设只使用 DSH 自带插件，不需要额外安装任何插件。安装后它会自动出现在预设列表中。
+该预设只使用 DSH 自带插件，不需要额外安装任何插件。通过插件市场安装时，它会随包的 bundle patch 一起写入；手动安装时由 `install.mjs` 追加。
 
 ## 安装
+
+### 方式一：插件市场（推荐）
+
+在「插件 → 发现 → 索引源（Index sources）」里添加本仓库的索引：
+
+```
+https://cdn.jsdelivr.net/gh/L-Shy-P/dsh-preset-manager@main/index.json
+```
+
+如果访问不了 jsDelivr，可以换成 GitHub 原始地址：
+
+```
+https://raw.githubusercontent.com/L-Shy-P/dsh-preset-manager/main/index.json
+```
+
+之后在发现页搜索「预设管理器」或 `dsh-preset-manager`，点安装并重启 DSH 即可。索引里的版本固定到仓库 commit，安装的是这个仓库本身（不是 npm 包）。
+
+### 方式二：手动安装（git clone）
 
 要求：Node.js 18+，已启动过一次 DSH 桌面端（让 profile 目录生成）。
 
@@ -48,9 +66,9 @@ node install.mjs --profile <dir>    # 指定 profile 目录（默认 ~/.dsh/prof
 
 安装脚本会：
 
-- 把宿主插件写成 `preset-manager.<hash>.mjs`（内容哈希命名，便于升级）；
-- 把 UI 包复制到 `<profile>/node_modules/dsh-preset-manager-ui`；
-- 在 `<profile>/cordis.patch.yml` 里写三行：宿主插件行、UI 行、自带预设声明；
+- 把插件包复制到 `<profile>/node_modules/dsh-preset-manager`；
+- 在 `<profile>/cordis.patch.yml` 里写一行 `id: preset-manager` 的插件条目；
+- 追加自带预设声明（已存在则跳过）；
 - 写入前备份为 `cordis.patch.yml.bak-preset-manager-<时间戳>`；
 - 保留已保存的设置（配置覆盖行不变）。
 
@@ -78,19 +96,21 @@ node install.mjs --profile <dir>    # 指定 profile 目录（默认 ~/.dsh/prof
 ## 卸载
 
 1. 退出 DSH；
-2. 编辑 `<profile>/cordis.patch.yml`，删除 id 为 `preset-manager`、`preset-manager-ui`、`preset-better-standard` 的条目（以及设置生成的 `- id: preset-manager` 配置覆盖条目）；
-3. 删除 `<profile>/preset-manager.*.mjs` 与 `<profile>/node_modules/dsh-preset-manager-ui`；
+2. 编辑 `<profile>/cordis.patch.yml`，删除 id 为 `preset-manager` 与 `preset-better-standard` 的条目（以及设置生成的 `- id: preset-manager` 配置覆盖条目）；
+3. 删除 `<profile>/node_modules/dsh-preset-manager`；
 4. 重启 DSH。
 
-若是通过本脚本安装且从未保存过设置，也可以直接从备份 `cordis.patch.yml.bak-preset-manager-*` 恢复。
+若是通过 `install.mjs` 安装且从未保存过设置，也可以直接从备份 `cordis.patch.yml.bak-preset-manager-*` 恢复。
 
 ## 目录结构
 
 ```
-plugin/index.mjs            宿主插件（命令、模型工具、引导、子代理策略、导入导出）
-ui/                         浏览器 UI 包（顶栏切换器、设置页、命令卡片）
+lib/index.js                宿主插件（命令、模型工具、引导、子代理策略、导入导出）
+lib/client.js               浏览器 UI bundle（顶栏切换器、设置页、命令卡片）
+cordis.patch.yml            dsh bundle patch（插件行 + 自带预设）
 presets/better-standard.yml 自带预设声明
-install.mjs                 安装脚本
+index.json                  插件市场 format 1 索引（供「索引源」使用）
+install.mjs                 手动安装脚本（git clone 用户）
 ```
 
 ## 已知限制
@@ -98,6 +118,7 @@ install.mjs                 安装脚本
 - profile patch 的配置写入依赖 DSH `0.2.1` 的 settings/config-editor 行为；升级 DSH 大版本后请先跑 `node install.mjs --check`。
 - 预设切换在 Agent 空闲时进行；运行中的回合不能切。
 - 极简模式使用 `complete` persona，会丢弃其他系统提示词段，因此预设管理引导不会出现在极简模式下（这是预期行为）。
+- 插件市场的「精选列表」收录需要另外向 awesome-dsh-plugin 提 PR；在此之前用上面的自定义索引源即可安装。
 
 ## License
 

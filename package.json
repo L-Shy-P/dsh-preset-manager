@@ -1,16 +1,69 @@
 {
   "name": "dsh-preset-manager",
   "version": "1.0.0",
-  "private": true,
+  "description": "DSH（DeepSeek Harness）Agent 预设管理器：顶栏切换、按预设工具引导、子代理预设策略、预设包导入导出，附带「标准模式·加强版」预设。",
   "type": "module",
-  "description": "Agent preset manager for DeepSeek Harness: header switcher, settings page, model tools, subagent preset policy, and preset packages.",
-  "license": "MIT",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "presets",
+    "index.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-primitives",
+        "@deepseek-ai/dsh-client-ui-session",
+        "@deepseek-ai/dsh-client-ui-workspace",
+        "@deepseek-ai/dsh-api-remotes"
+      ]
+    },
+    "compatibility": {
+      "dshReleases": {
+        "0.2.1-rc.2": "compatible"
+      }
+    }
+  },
+  "scripts": {
+    "setup": "node install.mjs",
+    "check": "node install.mjs --check",
+    "dry-run": "node install.mjs --dry-run"
+  },
   "engines": {
     "node": ">=18"
   },
-  "scripts": {
-    "install": "node install.mjs",
-    "check": "node install.mjs --check",
-    "dry-run": "node install.mjs --dry-run"
-  }
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "plugin",
+    "agent-preset",
+    "preset-manager",
+    "cordis"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/L-Shy-P/dsh-preset-manager.git"
+  },
+  "homepage": "https://github.com/L-Shy-P/dsh-preset-manager",
+  "license": "MIT"
 }

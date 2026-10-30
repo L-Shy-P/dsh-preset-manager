@@ -1,0 +1,51 @@
+{
+  "format": 1,
+  "title": {
+    "zh": "DSH 预设管理器",
+    "en": "DSH Preset Manager"
+  },
+  "description": {
+    "zh": "DeepSeek Harness 的 Agent 预设管理插件与自带预设索引。",
+    "en": "Index for the DSH preset manager plugin and its bundled preset."
+  },
+  "plugins": [
+    {
+      "name": "dsh-preset-manager",
+      "title": {
+        "zh": "预设管理器",
+        "en": "Preset Manager"
+      },
+      "description": {
+        "zh": "顶栏切换 Agent 预设、按预设注入工具引导、管理子代理可用预设、导入导出预设包；附带「标准模式·加强版」预设。",
+        "en": "Switch agent presets from the header, inject per-preset tool guidance, manage subagent presets, and import/export preset packages; ships the Better Standard preset."
+      },
+      "homepage": "https://github.com/L-Shy-P/dsh-preset-manager",
+      "repository": {
+        "url": "https://github.com/L-Shy-P/dsh-preset-manager"
+      },
+      "metadata": {
+        "keywords": [
+          "dsh",
+          "deepseek-harness",
+          "preset",
+          "subagent",
+          "cordis"
+        ]
+      },
+      "versions": [
+        {
+          "version": "1.0.0",
+          "publishTimestamp": 1793395798,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/L-Shy-P/dsh-preset-manager",
+            "commit": "44399f45f7868223f4612d8156efa753dc24bfae"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.2"
+          }
+        }
+      ]
+    }
+  ]
+}
