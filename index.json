@@ -39,7 +39,7 @@
           "source": {
             "type": "git",
             "url": "https://github.com/L-Shy-P/dsh-preset-manager",
-            "commit": "44399f45f7868223f4612d8156efa753dc24bfae"
+            "commit": "cd02259c9dd5470ba4431b76cc204707ece013e3"
           },
           "engines": {
             "dsh": ">=0.2.1-rc.2"
