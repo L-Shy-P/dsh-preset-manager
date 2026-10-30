@@ -1,0 +1,16 @@
+{
+  "name": "dsh-preset-manager",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Agent preset manager for DeepSeek Harness: header switcher, settings page, model tools, subagent preset policy, and preset packages.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "install": "node install.mjs",
+    "check": "node install.mjs --check",
+    "dry-run": "node install.mjs --dry-run"
+  }
+}
