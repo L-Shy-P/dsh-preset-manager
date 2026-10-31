@@ -44,7 +44,27 @@ https://raw.githubusercontent.com/L-Shy-P/dsh-preset-manager/main/index.json
 
 之后在发现页搜索「预设管理器」或 `dsh-preset-manager`，点安装并重启 DSH 即可。索引里的版本固定到仓库 commit，安装的是这个仓库本身（不是 npm 包）。
 
-### 方式二：手动安装（git clone）
+### 方式二：离线压缩包（分享给别人用这个）
+
+`dsh-preset-manager-1.0.0.zip` 解压后：
+
+```
+dsh-preset-manager-1.0.0/
+├── 安装(双击这里).cmd       ← Windows 双击安装
+├── 卸载.cmd                 ← Windows 双击卸载
+├── 使用说明.md              ← 给完全没接触过的人看的步骤
+├── install.mjs              ← 安装器本体（macOS/Linux 用 node install.mjs）
+├── dsh-preset-manager-1.0.0.tgz  ← 也可以喂给 DSH 的「安装第三方插件」
+└── package/                 ← 插件包本体（DSH 里填这个目录的绝对路径也能装）
+```
+
+**推荐做法**：解压到一个固定位置 → 完全退出 DSH → 双击 `安装(双击这里).cmd` → 重开 DSH。
+
+安装器会找到 DSH 与 profile，把插件复制进 `<profile>/local/dsh-preset-manager`，再用 DSH 自带插件命令注册；找不到命令行时退化为直接写 `package.json` 的 `dependencies` 与 `dsh.profile.bundles`。两种方式都不需要手动编辑 YAML，升级/卸载也不会留下重复行。
+
+> 用 DSH 界面安装（上表里的 tgz 或 `package` 目录）时，源文件不能删除或移动，否则插件失效；用 `安装.cmd` 会把文件复制进 profile，之后可以删掉解压目录。
+
+### 方式三：手动安装（git clone）
 
 要求：Node.js 18+，已启动过一次 DSH 桌面端（让 profile 目录生成）。
 
@@ -60,19 +80,19 @@ node install.mjs
 
 ```bash
 node install.mjs --dry-run          # 只打印计划，不写文件
-node install.mjs --check            # 校验已安装内容与仓库源码一致
-node install.mjs --profile <dir>    # 指定 profile 目录（默认 ~/.dsh/profiles/desktop）
+node install.mjs --uninstall        # 卸载
+node install.mjs --profile <name>   # 指定 profile（默认 desktop）
 ```
 
 安装脚本会：
 
-- 把插件包复制到 `<profile>/node_modules/dsh-preset-manager`；
-- 在 `<profile>/cordis.patch.yml` 里写一行 `id: preset-manager` 的插件条目；
-- 追加自带预设声明（已存在则跳过）；
-- 写入前备份为 `cordis.patch.yml.bak-preset-manager-<时间戳>`；
-- 保留已保存的设置（配置覆盖行不变）。
+- 把插件包复制到 `<profile>/local/dsh-preset-manager`；
+- 调 DSH 自带插件命令把它注册进 `dependencies` 与 `dsh.profile.bundles`；
+- 找不到 DSH 时退化为直接改 `package.json` 并复制到 `node_modules`；
+- 自带预设由包内的 `cordis.patch.yml` 自动插入，不需要单独导入；
+- 写入前备份 `package.json`。
 
-脚本不依赖 npm 包；如果本机装了 `js-yaml` 会额外做一次 YAML 校验，否则跳过（DSH 启动时仍会校验）。
+脚本不依赖 npm 包，也不需要联网。
 
 ## 使用
 

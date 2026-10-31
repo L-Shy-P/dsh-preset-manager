@@ -1,253 +1,202 @@
 #!/usr/bin/env node
-// DSH 预设管理器安装脚本（无第三方依赖）
-//
-// 把本仓库作为标准 DSH 插件包装进 profile：
-//   1. 复制到 <profile>/node_modules/dsh-preset-manager；
-//   2. 在 profile patch 里写一行 plugin 条目（id: preset-manager）；
-//   3. 追加自带预设「标准模式·加强版」（仅使用 DSH 自带插件）。
-//
-// 用法：
-//   node install.mjs                 安装 / 更新
-//   node install.mjs --dry-run       只打印计划，不写文件
-//   node install.mjs --check         校验已安装内容与仓库源码一致
-//   node install.mjs --profile <dir> 指定 profile 目录（默认 ~/.dsh/profiles/desktop）
-//
-// 注意：脚本会先备份 profile patch；写入后需要重启 DeepSeek Harness 桌面端。
+/**
+ * DSH 预设管理器 — 一键安装脚本（Windows / macOS / Linux 通用，无第三方依赖）
+ *
+ * 做三件事：
+ *   1. 把插件包复制到 <profile>/local/dsh-preset-manager；
+ *   2. 用 DSH 自带的插件命令把它装进 profile（写 dependencies + dsh.profile.bundles）；
+ *   3. 如果找不到 DSH 命令行，就退化为直接改 profile 的 package.json 并放入 node_modules。
+ *
+ * 用法：
+ *   node install.mjs                 安装 / 更新
+ *   node install.mjs --uninstall     卸载
+ *   node install.mjs --dry-run       只打印计划
+ *   node install.mjs --profile web   指定 profile（默认 desktop）
+ */
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import crypto from "node:crypto";
-import { createRequire } from "node:module";
+import { spawnSync } from "node:child_process";
 
 const ROOT = import.meta.dirname ?? path.dirname(new URL(import.meta.url).pathname);
 const argv = process.argv.slice(2);
 const dryRun = argv.includes("--dry-run");
-const checkOnly = argv.includes("--check");
-const profileIndex = argv.indexOf("--profile");
-const profileFromArgs =
-	profileIndex >= 0
-		? argv[profileIndex + 1]
-		: argv.find((arg) => arg.startsWith("--profile="))?.slice("--profile=".length);
-const profileDir = path.resolve(
-	profileFromArgs ?? process.env.DSH_PROFILE_DIR ?? path.join(os.homedir(), ".dsh", "profiles", "desktop")
-);
-const patchPath = path.join(profileDir, "cordis.patch.yml");
-const STAMP = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
+const uninstall = argv.includes("--uninstall");
+const profileArg = (() => {
+	const i = argv.indexOf("--profile");
+	if (i >= 0 && argv[i + 1]) return argv[i + 1];
+	const inline = argv.find((a) => a.startsWith("--profile="));
+	return inline ? inline.slice("--profile=".length) : "desktop";
+})();
 
 const PACKAGE_NAME = "dsh-preset-manager";
-const ENTRY_ID = "preset-manager";
-const PRESET_ROW_ID = "preset-better-standard";
-const INSTALL_FILES = [
-	"package.json",
-	"cordis.patch.yml",
-	"lib/index.js",
-	"lib/client.js",
-	"presets/better-standard.yml",
-	"README.md",
-	"LICENSE",
-	"index.json"
-];
+// dist 目录里包在 package/ 下；仓库根上文件就在根上。两处用同一份脚本。
+const PKG_DIR = fs.existsSync(path.join(ROOT, "package", "package.json")) ? path.join(ROOT, "package") : ROOT;
+const STAMP = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
 
-function fail(message) {
-	console.error("❌ " + message);
-	process.exit(1);
-}
-function info(message) {
-	console.log(message);
-}
-function read(rel) {
-	return fs.readFileSync(path.join(ROOT, rel), "utf8");
-}
+function info(m) { console.log(m); }
+function fail(m) { console.error("❌ " + m); process.exit(1); }
+function ok(m) { console.log("✅ " + m); }
 
-if (!fs.existsSync(patchPath)) {
-	fail(`找不到 profile patch：${patchPath}\n   请先启动一次 DeepSeek Harness 桌面端，或用 --profile 指定正确的 profile 目录。`);
-}
-
-// ── 校验仓库内容 ───────────────────────────────────────────────────
-const manifest = JSON.parse(read("package.json"));
-if (manifest.name !== PACKAGE_NAME) fail(`package.json name 应为 ${PACKAGE_NAME}`);
-if (manifest.dsh?.bundle?.patch !== "./cordis.patch.yml") fail("package.json 缺少 dsh.bundle.patch");
-if (manifest.dsh?.client?.platform !== "web") fail("package.json 缺少 dsh.client.platform='web'");
-if (manifest.exports?.["./client"]?.default !== "./lib/client.js") fail("package.json 缺少 exports['./client']");
-const clientText = read("lib/client.js");
-if (!clientText.includes("__ModuleLoader__.load") || !clientText.includes(`id: "${PACKAGE_NAME}"`)) {
-	fail(`lib/client.js 不是有效的浏览器 bundle（模块 id 应为 ${PACKAGE_NAME}）`);
-}
-try {
-	new Function(clientText);
-} catch (error) {
-	fail("lib/client.js 存在语法错误：" + error.message);
-}
-const presetBlock = read("presets/better-standard.yml").replace(/\r\n/g, "\n").trimEnd();
-if (!presetBlock.startsWith("- insert:") || !presetBlock.includes("id: " + PRESET_ROW_ID)) {
-	fail("presets/better-standard.yml 不是有效的预设块");
-}
-
-const hostModule = await import(new URL("./lib/index.js", import.meta.url).href);
-if (hostModule.name !== ENTRY_ID) fail(`lib/index.js 导出的 name 应为 ${ENTRY_ID}`);
-if (typeof hostModule.apply !== "function") fail("lib/index.js 缺少 apply()");
-
-// ── profile patch 文本操作 ─────────────────────────────────────────
-const originalPatch = fs.readFileSync(patchPath, "utf8");
-const eol = originalPatch.includes("\r\n") ? "\r\n" : "\n";
-let patch = originalPatch.replace(/\r\n/g, "\n");
-
-function escapeId(id) {
-	return id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-/** 删除所有 insert 块（含紧邻其上的注释行），块内出现 `id: <id>` 才算匹配。 */
-function removeInsertBlocks(text, id) {
-	const lines = text.split("\n");
-	const pattern = new RegExp("^\\s*-\\s*id: " + escapeId(id) + "\\s*$", "m");
-	for (;;) {
-		let start = -1;
-		let end = -1;
-		for (let i = 0; i < lines.length; i += 1) {
-			if (lines[i] !== "- insert:") continue;
-			let stop = i + 1;
-			while (stop < lines.length && !/^- /.test(lines[stop])) stop += 1;
-			if (pattern.test(lines.slice(i, stop).join("\n"))) {
-				start = i;
-				end = stop;
-				break;
-			}
-		}
-		if (start < 0) return lines.join("\n");
-		let head = start;
-		while (head > 0 && lines[head - 1].startsWith("#")) head -= 1;
-		lines.splice(head, end - head);
+// ── 1. 定位 DSH 安装目录与 profile ──────────────────────────────────
+function findDshDir() {
+	const env = process.env.DSH_DESKTOP_DIR;
+	if (env && fs.existsSync(env)) return env;
+	const candidates = [];
+	if (process.platform === "win32") {
+		const ps = [
+			"Get-ItemProperty",
+			"'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',",
+			"'HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',",
+			"'HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'",
+			"-ErrorAction SilentlyContinue |",
+			"Where-Object { $_.DisplayName -like 'DeepSeek Harness*' } |",
+			"Select-Object -First 1 -ExpandProperty InstallLocation"
+		].join(" ");
+		const res = spawnSync("powershell.exe", ["-NoProfile", "-Command", ps], { encoding: "utf8" });
+		const found = (res.stdout ?? "").trim();
+		if (found) candidates.push(found);
+		candidates.push(
+			path.join(process.env.ProgramFiles ?? "C:\\Program Files", "DeepSeek Harness"),
+			path.join(process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)", "DeepSeek Harness"),
+			path.join(process.env.LOCALAPPDATA ?? "", "Programs", "DeepSeek Harness")
+		);
+	} else if (process.platform === "darwin") {
+		candidates.push("/Applications/DeepSeek Harness.app/Contents/Resources");
+	} else {
+		candidates.push("/opt/DeepSeek Harness/resources", "/usr/lib/deepseek-harness");
 	}
-}
-
-/** 删除顶层覆盖行（config-editor 写的 `- id: <id>`）。 */
-function removeTopRow(text, id) {
-	const lines = text.split("\n");
-	const start = lines.findIndex((line) => line === "- id: " + id);
-	if (start < 0) return text;
-	let end = start + 1;
-	while (end < lines.length && !/^- /.test(lines[end]) && !/^#/.test(lines[end])) end += 1;
-	lines.splice(start, end - start);
-	return lines.join("\n");
-}
-
-/** 把顶层覆盖行的 name 指向已安装的包名（保留其 config）。 */
-function retargetTopRowName(text, id, name) {
-	const lines = text.split("\n");
-	const start = lines.findIndex((line) => line === "- id: " + id);
-	if (start < 0) return text;
-	for (let i = start + 1; i < lines.length && !/^- /.test(lines[i]); i += 1) {
-		if (/^\s{2}name:\s*/.test(lines[i])) {
-			lines[i] = "  name: '" + name + "'";
-			break;
+	for (const dir of candidates) {
+		if (dir && fs.existsSync(dir)) {
+			if (fs.existsSync(path.join(dir, "resources", "runtime", "cli", "bin", "dsh.cmd"))) return dir;
+			if (fs.existsSync(path.join(dir, "runtime", "cli", "bin", "dsh.cmd"))) return dir;
 		}
 	}
-	return lines.join("\n");
+	return undefined;
 }
 
-/** 把 insert 块放到顶层覆盖行之前（覆盖行必须能应用在新增行上）。 */
-function placeInsertBlock(text, id, blockLines) {
-	const cleaned = removeInsertBlocks(text, id);
-	const lines = cleaned.split("\n");
-	const override = lines.findIndex((line) => line === "- id: " + id);
-	const before = (override < 0 ? lines : lines.slice(0, override)).join("\n").replace(/\s+$/, "");
-	const after = override < 0 ? "" : lines.slice(override).join("\n").replace(/\s+$/, "");
-	let result = before + "\n\n" + blockLines.join("\n") + "\n";
-	if (after !== "") result += "\n" + after + "\n";
-	return result;
+const dshHome = process.env.DSH_HOME || path.join(os.homedir(), ".dsh");
+const profileDir = path.join(dshHome, "profiles", profileArg);
+const profileJson = path.join(profileDir, "package.json");
+
+if (!fs.existsSync(profileDir)) {
+	fail(`找不到 profile 目录：${profileDir}\n   请先启动一次 DeepSeek Harness 桌面端（让它生成 profile），再运行本脚本。`);
+}
+if (!fs.existsSync(profileJson)) {
+	fail(`profile 缺少 package.json：${profileJson}\n   请先启动一次 DeepSeek Harness 桌面端。`);
 }
 
-function appendPresetBlock(text) {
-	if (text.includes("id: " + PRESET_ROW_ID)) return text;
-	return text.replace(/\s+$/, "") + "\n\n" + presetBlock + "\n";
+// ── 2. 校验压缩包内的插件包 ────────────────────────────────────────
+for (const rel of ["package.json", "lib/index.js", "lib/client.js", "cordis.patch.yml", "presets/better-standard.yml"]) {
+	if (!fs.existsSync(path.join(PKG_DIR, rel))) fail(`压缩包不完整，缺少 package/${rel}。请重新解压后再运行。`);
+}
+const manifest = JSON.parse(fs.readFileSync(path.join(PKG_DIR, "package.json"), "utf8"));
+if (manifest.name !== PACKAGE_NAME) fail(`package/package.json 的 name 应为 ${PACKAGE_NAME}`);
+
+const localTarget = path.join(profileDir, "local", PACKAGE_NAME);
+const nmTarget = path.join(profileDir, "node_modules", PACKAGE_NAME);
+
+function readProfile() {
+	// 有的工具写 package.json 会带 UTF-8 BOM，JSON.parse 会直接报错，这里先去掉。
+	const raw = fs.readFileSync(profileJson, "utf8").replace(/^\uFEFF/, "");
+	return JSON.parse(raw);
+}
+function writeProfile(value) {
+	const tmp = profileJson + ".tmp-" + process.pid;
+	fs.writeFileSync(tmp, JSON.stringify(value, null, 2) + "\n", "utf8");
+	fs.renameSync(tmp, profileJson);
+}
+function fileSpec(target) {
+	return "file:" + target.split(path.sep).join("/");
 }
 
-// 清理旧版安装方式（file URL 宿主行 + 独立 UI 包）
-patch = removeInsertBlocks(patch, "preset-manager-ui");
-patch = removeInsertBlocks(patch, "preset-manager");
-patch = placeInsertBlock(patch, ENTRY_ID, [
-	"# 预设管理器（宿主 + 浏览器 UI，npm 包形式安装）",
-	"- insert:",
-	"    - id: " + ENTRY_ID,
-	"      name: '" + PACKAGE_NAME + "'"
-]);
-patch = retargetTopRowName(patch, ENTRY_ID, PACKAGE_NAME);
-patch = appendPresetBlock(patch);
-
-// 可选的 YAML 校验：有 js-yaml 才做，没有就跳过（脚本不强制 npm install）
-let yamlLib;
-try {
-	yamlLib = createRequire(import.meta.url)("js-yaml");
-} catch {
-	yamlLib = undefined;
-}
-if (yamlLib !== undefined) {
-	try {
-		const jsType = new yamlLib.Type("tag:yaml.org,2002:js", { kind: "scalar", construct: (data) => data });
-		const doc = yamlLib.load(patch, { schema: yamlLib.DEFAULT_SCHEMA.extend([jsType]) });
-		if (!Array.isArray(doc)) throw new Error("patch 顶层不是数组");
-	} catch (error) {
-		fail("生成的 profile patch 不是合法 YAML：" + error.message);
+// ── 3. 卸载 ────────────────────────────────────────────────────────
+if (uninstall) {
+	const backup = `${profileJson}.bak-${STAMP}`;
+	fs.copyFileSync(profileJson, backup);
+	const profile = readProfile();
+	if (profile.dependencies) delete profile.dependencies[PACKAGE_NAME];
+	const bundles = profile.dsh?.profile?.bundles;
+	if (Array.isArray(bundles)) {
+		profile.dsh.profile.bundles = bundles.filter((name) => name !== PACKAGE_NAME);
 	}
-} else {
-	info("· 跳过 YAML 校验（本机没有 js-yaml；DSH 会在启动时自行校验）");
-}
-
-const installDir = path.join(profileDir, "node_modules", PACKAGE_NAME);
-
-if (checkOnly) {
-	for (const rel of INSTALL_FILES) {
-		const target = path.join(installDir, rel);
-		if (!fs.existsSync(target)) fail(`未安装：${target} 不存在`);
-		if (fs.readFileSync(target, "utf8") !== read(rel)) fail(`已安装的 ${rel} 与仓库源码不一致`);
+	writeProfile(profile);
+	for (const dir of [nmTarget, localTarget]) {
+		if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
 	}
-	if (!originalPatch.includes("name: '" + PACKAGE_NAME + "'")) fail("profile patch 未指向 dsh-preset-manager 包");
-	if (!originalPatch.includes("id: " + PRESET_ROW_ID)) fail("profile patch 缺少自带预设");
-	info(`✅ 已安装：${PACKAGE_NAME}（node_modules/${PACKAGE_NAME}）+ 预设 better-standard`);
+	ok(`已从 profile「${profileArg}」卸载 ${PACKAGE_NAME}`);
+	info("请完全退出并重启 DeepSeek Harness 桌面端。");
 	process.exit(0);
 }
+
+// ── 4. 安装 ────────────────────────────────────────────────────────
+info(`profile : ${profileDir}`);
+info(`插件包  : ${PACKAGE_NAME} v${manifest.version}`);
 
 if (dryRun) {
-	info("🧪 预检通过，计划写入：");
-	info(`   profile : ${profileDir}`);
-	info(`   插件包  : node_modules/${PACKAGE_NAME}`);
-	info(`   插件行  : ${ENTRY_ID} → ${PACKAGE_NAME}`);
-	info(`   自带预设: better-standard`);
+	info("🧪 预检通过（未写入）");
+	info(`   将复制到 ${localTarget}`);
+	info(`   并注册到 dependencies / dsh.profile.bundles`);
 	process.exit(0);
 }
 
-// ── 写入 ───────────────────────────────────────────────────────────
-const backup = `${patchPath}.bak-preset-manager-${STAMP}`;
-fs.copyFileSync(patchPath, backup);
+const dshDir = findDshDir();
+const dshCmd = dshDir
+	? fs.existsSync(path.join(dshDir, "resources", "runtime", "cli", "bin", "dsh.cmd"))
+		? path.join(dshDir, "resources", "runtime", "cli", "bin", "dsh.cmd")
+		: path.join(dshDir, "runtime", "cli", "bin", "dsh.cmd")
+	: undefined;
 
-for (const rel of INSTALL_FILES) {
-	const target = path.join(installDir, rel);
-	fs.mkdirSync(path.dirname(target), { recursive: true });
-	const tmp = target + ".tmp-" + crypto.randomBytes(4).toString("hex");
-	fs.writeFileSync(tmp, read(rel));
-	fs.renameSync(tmp, target);
+// 4.1 先把包复制进 profile 的 local/，这样解压目录删掉也不影响
+fs.mkdirSync(path.dirname(localTarget), { recursive: true });
+fs.rmSync(localTarget, { recursive: true, force: true });
+fs.cpSync(PKG_DIR, localTarget, { recursive: true });
+info(`已复制插件文件到 ${localTarget}`);
+
+// 4.2 优先用 DSH 自己的插件安装命令（会正确写 dependencies + bundles + lockfile）
+let installedByCli = false;
+if (dshCmd) {
+	info("正在用 DSH 自带插件命令安装…");
+	const args = ["/c", dshCmd, "plugin", "--profile", profileArg, "add", localTarget];
+	const res = spawnSync(process.platform === "win32" ? "cmd.exe" : dshCmd, process.platform === "win32" ? args : ["plugin", "--profile", profileArg, "add", localTarget], {
+		cwd: profileDir,
+		stdio: "inherit"
+	});
+	installedByCli = res.status === 0;
+	if (!installedByCli) info("· DSH 插件命令未成功，改用直接写入 profile 的方式。");
+} else {
+	info("· 未找到 DSH 安装目录，改用直接写入 profile 的方式。");
 }
 
-const out = eol === "\r\n" ? patch.replace(/\n/g, "\r\n") : patch;
-const patchTmp = patchPath + ".tmp-" + crypto.randomBytes(4).toString("hex");
-fs.writeFileSync(patchTmp, out, "utf8");
-fs.renameSync(patchTmp, patchPath);
-
-// 清理旧版的独立文件与包：preset-manager.<hash>.mjs、dsh-preset-manager-ui、preset-switch 遗留
-for (const name of fs.readdirSync(profileDir)) {
-	if (/^preset-manager\.[0-9a-f]{8}\.mjs$/.test(name) || /^preset-switch(\.[0-9a-f]{8}\.mjs)?$/.test(name)) {
-		fs.rmSync(path.join(profileDir, name), { force: true });
+if (!installedByCli) {
+	// 4.3 退路：直接写 profile 的 package.json，并把包放进 node_modules
+	const backup = `${profileJson}.bak-${STAMP}`;
+	fs.copyFileSync(profileJson, backup);
+	const profile = readProfile();
+	profile.dependencies ??= {};
+	profile.dependencies[PACKAGE_NAME] = fileSpec(localTarget);
+	profile.dsh ??= {};
+	profile.dsh.profile ??= {};
+	profile.dsh.profile.bundles ??= [];
+	if (!profile.dsh.profile.bundles.includes(PACKAGE_NAME)) {
+		profile.dsh.profile.bundles.push(PACKAGE_NAME);
 	}
-}
-for (const legacy of ["dsh-preset-manager-ui", "dsh-preset-switch-ui"]) {
-	fs.rmSync(path.join(profileDir, "node_modules", legacy), { recursive: true, force: true });
+	writeProfile(profile);
+	fs.rmSync(nmTarget, { recursive: true, force: true });
+	fs.cpSync(PKG_DIR, nmTarget, { recursive: true });
+	info(`已写入 ${path.basename(profileJson)}（备份 ${path.basename(backup)}）`);
 }
 
-info("✅ 已安装/更新：");
-info(`   插件包 node_modules/${PACKAGE_NAME}`);
-info(`   插件行 ${ENTRY_ID} → ${PACKAGE_NAME}`);
-info(`   自带预设 better-standard（标准模式·加强版）`);
-info(`   备份：${path.basename(backup)}`);
+// 4.4 校验结果
+const after = readProfile();
+const hasDep = Boolean(after.dependencies?.[PACKAGE_NAME]);
+const hasBundle = Array.isArray(after.dsh?.profile?.bundles) && after.dsh.profile.bundles.includes(PACKAGE_NAME);
+if (!hasDep || !hasBundle) {
+	fail("安装后校验失败：profile 里没有 dsh-preset-manager 的依赖或 bundle 条目。");
+}
+
+ok(`安装完成：${PACKAGE_NAME} 已注册为 profile「${profileArg}」的插件 bundle`);
+info("自带预设「标准模式·加强版」会随包一起出现，无需单独导入。");
 info("");
-info("下一步：完全退出并重启 DeepSeek Harness 桌面端；");
-info("顶栏会出现「预设 + 当前预设名」，设置 → 预设管理 里可配置。");
+info("下一步：完全退出并重启 DeepSeek Harness 桌面端。");
+info("重启后：顶栏出现「预设 + 当前预设名」，设置 → 预设管理 里可配置。");
