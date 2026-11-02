@@ -157,10 +157,21 @@ info(`已复制插件文件到 ${localTarget}`);
 let installedByCli = false;
 if (dshCmd) {
 	info("正在用 DSH 自带插件命令安装…");
-	const args = ["/c", dshCmd, "plugin", "--profile", profileArg, "add", localTarget];
-	const res = spawnSync(process.platform === "win32" ? "cmd.exe" : dshCmd, process.platform === "win32" ? args : ["plugin", "--profile", profileArg, "add", localTarget], {
+	// 不要走 cmd.exe：dsh.cmd 的路径里有空格，cmd /c 的引号规则会把 "D:\Program Files..."
+	// 拆成 D:\Program，报「找不到网络路径」。直接调 Electron 可执行文件 + cli.js 最稳。
+	const cliArgs = ["plugin", "--profile", profileArg, "add", localTarget];
+	const desktopExe = path.join(dshDir ?? "", "DeepSeek Harness.exe");
+	const cliScript = path.join(dshDir ?? "", "resources", "app.asar", "dsh", "node_modules", "@deepseek-ai", "dsh-desktop-host", "lib", "cli.js");
+	// cli.js 在 app.asar 内部，普通 Node 的 fs 看不到它（只有 Electron 的 asar 补丁能），
+	// 所以只判断主程序是否存在。
+	const canRunDirect = process.platform === "win32" && fs.existsSync(desktopExe);
+	const command = canRunDirect ? desktopExe : dshCmd;
+	const args = canRunDirect ? ["--expose-internals", cliScript, ...cliArgs] : cliArgs;
+	const res = spawnSync(command, args, {
 		cwd: profileDir,
-		stdio: "inherit"
+		stdio: "inherit",
+		shell: !canRunDirect && process.platform === "win32",
+		env: canRunDirect ? { ...process.env, ELECTRON_RUN_AS_NODE: "1" } : process.env
 	});
 	installedByCli = res.status === 0;
 	if (!installedByCli) info("· DSH 插件命令未成功，改用直接写入 profile 的方式。");
